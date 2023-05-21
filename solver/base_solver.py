@@ -75,8 +75,8 @@ class Solver:
         # Add Time Windows constraint.
         self.routing.AddDimension(
             transit_callback_index,
-            10 ** 10,  # allow waiting time at nodes
-            10 ** 10,  # maximum time per vehicle route
+            10**10,  # allow waiting time at nodes
+            10**10,  # maximum time per vehicle route
             False,  # Don't force start cumul to zero, i.e. vehicles can start after time 0 from depot
             "Time",
         )
@@ -108,6 +108,32 @@ class Solver:
                 time_dimension.CumulVar(self.routing.End(i))
             )
 
+    def solve_model2(self, settings: SolverSetting):
+        """
+        Solver model with solver settings.
+
+        Parameters
+        ----------
+        settings : SolverSetting
+            Solver settings according to SolverSetting model.
+        """
+
+        # Setting search parameters for exact method (Constrain Programming).
+        search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+        search_parameters.first_solution_strategy = (
+            routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
+        )
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search_parameters.time_limit.seconds = settings["time_limit"]
+
+        # Create the CP solver.
+        solver = self.routing.solver()
+
+        # Solve the problem using the CP solver and the specified search parameters.
+        self.solution = solver.SolveWithParameters(search_parameters)
+
     def solve_model(self, settings: SolverSetting):
         """
         Solver model with solver settings.
@@ -120,6 +146,8 @@ class Solver:
 
         # Setting first solution heuristic.
         search_parameters = pywrapcp.DefaultRoutingSearchParameters()
+
+        # PARALLEL_CHEAPEST_INSERTION
         search_parameters.first_solution_strategy = (
             routing_enums_pb2.FirstSolutionStrategy.PARALLEL_CHEAPEST_INSERTION
         )
@@ -127,6 +155,7 @@ class Solver:
             routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
         )
         search_parameters.time_limit.seconds = settings["time_limit"]
+        search_parameters.use_full_propagation = True
 
         # Solve the problem.
         self.solution = self.routing.SolveWithParameters(search_parameters)
@@ -135,15 +164,16 @@ class Solver:
         """
         Print solution to console.
         """
-        print(f"Solution status: {self.routing.status()}\n")
+        # print(f"Solution status: {self.routing.status()}\n")
         if self.routing.status() == 1:
-            print(
-                f"Objective: {self.solution.ObjectiveValue()/self.time_precision_scaler}\n"
-            )
+            # print(
+            #     f"Objective: {self.solution.ObjectiveValue()/self.time_precision_scaler}\n"
+            # )
             time_dimension = self.routing.GetDimensionOrDie("Time")
             cap_dimension = self.routing.GetDimensionOrDie("Capacity")
             total_time = 0
             total_vehicles = 0
+            travel_path = []
             for vehicle_id in range(self.data["num_vehicles"]):
                 index = self.routing.Start(vehicle_id)
                 plan_output = f"Route for vehicle {vehicle_id}:\n"
@@ -151,12 +181,21 @@ class Solver:
                     time_var = time_dimension.CumulVar(index)
                     cap_var = cap_dimension.CumulVar(index)
                     plan_output += f"{self.manager.IndexToNode(index)} -> "
+                    if self.manager.IndexToNode(index) == 0 and len(travel_path) > 0:
+                        if travel_path[-1] != 0:
+                            travel_path += [self.manager.IndexToNode(index)]
+                        else:
+                            pass
+                    else:
+                        travel_path += [self.manager.IndexToNode(index)]
+
                     index = self.solution.Value(self.routing.NextVar(index))
                 time_var = time_dimension.CumulVar(index)
                 plan_output += f"{self.manager.IndexToNode(index)}\n"
+
                 plan_output += f"Time of the route: {self.solution.Min(time_var)/self.time_precision_scaler}min\n"
                 plan_output += f"Load of vehicle: {self.solution.Min(cap_var)}\n"
-                print(plan_output)
+                # print(plan_output)
                 total_time += self.solution.Min(time_var) / self.time_precision_scaler
                 if self.solution.Min(time_var) > 0:
                     total_vehicles += 1
@@ -164,6 +203,9 @@ class Solver:
                 total_time
                 - sum(self.data["service_times"]) / self.time_precision_scaler
             )
-            print(f"Total time of all routes: {total_time}min")
-            print(f"Total travel time of all routes: {total_travel_time}min")
-            print(f"Total vehicles used: {total_vehicles}")
+            # print(f"Total time of all routes: {total_time}min")
+            # print(f"Total travel time of all routes: {total_travel_time}min")
+            # print(f"Total vehicles used: {total_vehicles}")
+            return travel_path
+        else:
+            return []
